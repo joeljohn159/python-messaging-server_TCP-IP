@@ -1,57 +1,59 @@
-import socket;
-import sys;
+import socket
+import threading
+import queue
 
+class Server:
+    def __init__(self, host='localhost', port=8685):
+        self.host = host
+        self.port = port
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen(5)
+        self.clients = {}
+        self.buffer = queue.Queue()
+        self.running = True
+        self.counter = 0
 
-# create a socket
-def create_socket():
-    try:
-        global host
-        global port 
-        global s  
-        host = ''
-        port = 8989
-        s = socket.socket()  
-    except socket.error as msg:
-        print('Socket creation error : '+str(msg))
+    def start(self):
+        print("Server (",self.host,") started on port", self.port)
+        threading.Thread(target=self.handle_clients).start()
+        threading.Thread(target=self.forward_messages).start()
 
+    def handle_clients(self):
+        while self.running:
+            try:
+                self.counter += 1
+                client_socket, client_address = self.server_socket.accept()
+                print(f"Client {client_address} connected")
+                self.clients[self.counter] = [client_address,client_socket]
+                threading.Thread(target=self.receive_messages, args=(client_socket, client_address)).start()
+            except OSError:
+                break
 
-#Binding the socket and listing  to connections
-def bind_socket():
-    try:
-        print('Binding the port : ' +str(port))
-        s.bind((host,port))
-        s.listen(255)
+    def receive_messages(self, client_socket, client_address):
+        while True:
+            try:
+                message = client_socket.recv(1024).decode()
+                if message:
+                    print(f"Received from {client_address}: {message}",end="")
+                    self.buffer.put((client_address, message))
+                else:
+                    break
+            except:
+                break
+        client_socket.close()
+        del self.clients[client_address]
+        print(f"Client {client_address} disconnected")
 
-    except socket.error as msg:
-        print('Socket Binding error : ' + str(msg)+'/n'+'Retrying...')
-        bind_socket()
+    def forward_messages(self):
+        while True:
+            if not self.buffer.empty():
+                client_address, message = self.buffer.get()
+                for address, client_socket in self.clients.values():
+                    if address != client_address:
+                        client_socket.sendall(message.encode())
 
-#Establish a connection with a client (socket must be listing)
-
-def socket_accept():
-    conn, address = s.accept()
-    print('Connection Established : IP=' +address[0]+ ' PORT='+str(address[1]))
-    send_commands(conn)
-    conn.close()
-
-#send commands to clients:
-def send_commands(conn):
-    while True:
-        cmd = input()
-        if cmd == 'quit':
-            conn.close()
-            s.close()
-            sys.exit()
-        if len(str.encode(cmd)) > 0:
-            conn.send(str.encode(cmd))
-            client_response = str(conn.recv(1024), 'utf-8')
-            print(client_response, end="")
-        
-
-def main():
-    create_socket()
-    bind_socket()
-    socket_accept()
-
-main()
-
+    def servershutdown(self):
+        self.running = False
+        self.server_socket.close()
+        print("Server shut down")
